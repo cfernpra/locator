@@ -2,11 +2,26 @@
 #include <TinyGPS++.h>
 #include <math.h>
 
-unsigned long lastMessageTime = 0; // Tiempo de la última impresión
-const unsigned long messageInterval = 100; // Intervalo entre mensajes en milisegundos
+// Clase Timer para gestionar temporización
+class Timer {
+private:
+    unsigned long lastTime = 0;   // Tiempo del último evento
+    unsigned long interval;      // Intervalo permitido entre eventos
+
+public:
+    Timer(unsigned long ms) : interval(ms) {}
+
+    bool isReady() {
+        unsigned long currentTime = millis();
+        if (currentTime - lastTime >= interval) {
+            lastTime = currentTime;
+            return true;
+        }
+        return false;
+    }
+};
 
 // Clase para el manejo del GPS
-
 class GPS {
 private:
     TinyGPSPlus gps;
@@ -55,16 +70,11 @@ public:
 
     bool isOutsideSafeZone(double latitude, double longitude) {
         double distance = calculateDistance(latitude, longitude, safeZoneLat, safeZoneLon);
-        if(lastMessageTime == messageInterval){
-        Serial.print("Distancia a la zona segura: ");
-        Serial.print(distance);
-        Serial.println(" metros");
-        lastMessageTime = 0;
-        }else {
-        lastMessageTime++;
-        }
         return distance > safeZoneRadius;
+    }
 
+    double getDistanceToSafeZone(double latitude, double longitude) {
+        return calculateDistance(latitude, longitude, safeZoneLat, safeZoneLon);
     }
 };
 
@@ -95,10 +105,13 @@ class GeofencingSystem {
 private:
     GPS gps;
     LED led;
+    Timer messageTimer; // Controla la frecuencia de mensajes
 
 public:
-    GeofencingSystem(int gpsRxPin, int gpsTxPin, int ledPin, double safeLat, double safeLon, double safeRadius)
-        : gps(gpsRxPin, gpsTxPin, safeLat, safeLon, safeRadius), led(ledPin) {}
+    GeofencingSystem(int gpsRxPin, int gpsTxPin, int ledPin, double safeLat, double safeLon, double safeRadius, unsigned long messageInterval)
+        : gps(gpsRxPin, gpsTxPin, safeLat, safeLon, safeRadius), 
+          led(ledPin), 
+          messageTimer(messageInterval) {}
 
     void begin() {
         Serial.begin(9600);
@@ -111,25 +124,29 @@ public:
         double latitude, longitude;
         if (gps.updateLocation(latitude, longitude)) {
             if (gps.isOutsideSafeZone(latitude, longitude)) {
-        if(lastMessageTime == messageInterval){
-                Serial.println("¡Fuera de la zona segura!");
-                lastMessageTime = 0;
-                }else {
-                lastMessageTime++;
-                }
                 led.on();
+                if (messageTimer.isReady()) {
+                    Serial.println("¡Fuera de la zona segura!");
+                    Serial.print("Distancia a la zona segura: ");
+                    Serial.print(gps.getDistanceToSafeZone(latitude, longitude));
+                    Serial.println(" metros");
+                }
             } else {
-                Serial.println("Dentro de la zona segura.");
                 led.off();
+                if (messageTimer.isReady()) {
+                    Serial.println("Dentro de la zona segura.");
+                }
             }
         } else {
-            //Serial.println("Esperando datos GPS...");
+            if (messageTimer.isReady()) {
+                Serial.println("Esperando datos GPS...");
+            }
         }
     }
 };
 
 // Configuración global del sistema
-GeofencingSystem geofenceSystem(6, 7, 9, 40.416775, -3.703790, 500.0);
+GeofencingSystem geofenceSystem(6, 7, 9, 40.416775, -3.703790, 500.0, 1000); // Intervalo de 1 segundo para mensajes
 
 void setup() {
     geofenceSystem.begin();
